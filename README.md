@@ -1,53 +1,36 @@
-# Choreia Flow
+# Choreia Flow IN
 
-顧客管理・取引管理・名刺管理を Google スプレッドシートで行うシンプルな CRM。
+India edition of Choreia Flow — the CRM for **M2labo Bharat Pvt. Ltd.** (fresh produce / strawberries, GST-exempt goods). A single-file SPA (`index.html`) that uses Google Sheets as its backend and Google Identity Services for sign-in.
 
-## 機能
+## Sales pipeline
 
-- **ダッシュボード** — 顧客数・案件パイプライン・活動サマリーを一覧
-- **顧客管理** — 会社情報・担当者・連絡先の CRUD
-- **案件管理** — リード〜入金済みまでのパイプライン管理（リスト表示 / カンバン表示）
-- **活動記録** — 訪問・電話・メール・打合せなどの履歴管理
-- **名刺スキャン** — Gemini AI による名刺画像の自動読み取り → 顧客登録
+`Lead → Quotation → PI Issued → Paid → Shipped → Closed` (plus `Lost`).
 
-## 技術構成
+India runs on advance payment: revenue counts from **Paid** onward (`Paid`, `Shipped`, `Closed`).
 
-Choreia Photos と同じアーキテクチャ:
+## Documents
 
-| 要素 | 技術 |
-|------|------|
-| フロントエンド | 単一 HTML SPA（ビルド不要） |
-| 認証 | Google OAuth 2.0（組織ドメイン限定） |
-| データ保存 | Google Sheets API v4 |
-| 設定保存 | Google Drive（JSON ファイル） |
-| AI | Gemini API（名刺読み取り） |
-| ホスティング | GitHub Pages |
+Generated from a Google Sheets template (set in Flow Settings) into the customer's Drive folder:
 
-## セットアップ
+- **Quotation / Proforma Invoice (PI)**
+- **Delivery Challan**
+- **Bill of Supply** — exempt goods, **no tax lines are ever written** (document number gets a `B` suffix)
 
-1. Google Cloud Console でプロジェクトを作成
-2. OAuth 2.0 クライアント ID を取得
-3. Google Drive API と Google Sheets API を有効化
-4. `index.html` の `CLIENT_ID` を差し替え
-5. GitHub Pages でホスティング
+Amounts are plain INR with Indian digit grouping (`en-IN`, e.g. ₹1,00,000).
 
-### 初回利用
+## Quote numbering
 
-1. 組織の Google アカウントでログイン
-2. データ保存先の共有ドライブ・フォルダを選択
-3. 自動的にスプレッドシートが作成される
+Indian fiscal-year series (FY starts in April): `VB/FY{yy}-{yy2}/{seq4}`, e.g. July 2026 → `VB/FY26-27/0001`. Issued numbers are recorded in the `QuoteRegistry` sheet of the Flow spreadsheet; the next number is the max sequence for the current FY prefix + 1.
 
-## データ構造（Google Sheets）
+## Backend sheets
 
-### 顧客シート
-| ID | 会社名 | 担当者 | 部署 | 役職 | TEL | メール | 住所 | メモ | 登録日 |
+Created automatically in the configured shared-drive folder: `Customers`, `Deals`, `Activities`, `Cards`, `ActivityTargets`, `PhaseHistory`, `QuoteRegistry` (all English headers).
 
-### 案件シート
-| ID | 顧客ID | 会社名 | 案件名 | ステータス | 金額 | 担当者 | 開始日 | 期限 | メモ | 更新日 |
+## Config & login
 
-### 活動シート
-| ID | 顧客ID | 会社名 | 案件ID | 種別 | 内容 | 担当者 | 日時 |
+- Per-domain config file on Drive: **`choreia-flow-in-config.json`** — deliberately different from the Japanese edition's filename, so JP and IN never share config or data.
+- Shares the Choreia login/domain model: users sign in with their organisation Google account (`@m2-labo.in`); consumer domains are blocked. The `choreia_token` localStorage key is intentionally shared across Choreia apps (single sign-on behaviour).
 
-## 案件ステータス
+## Deployment
 
-リード → 提案中 → 交渉中 → 受注 → 納品済 → 請求済 → 入金済（/ 失注）
+Pushing to the repository deploys via GitHub Pages — a push to the default branch is a production release.
