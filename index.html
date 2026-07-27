@@ -316,6 +316,7 @@ textarea.form-input{resize:vertical;min-height:80px}
     <div class="card">
       <h2>Initial setup</h2>
       <p style="font-size:.9em;color:#5a7a6a;margin-bottom:16px">Setting up Choreia Flow IN for <strong id="setup-domain"></strong>.<br>Choose the shared drive and folder where data will be stored.</p>
+      <p style="font-size:.8em;color:#b45309;background:#fdf6e3;border:1px solid #ead9a8;border-radius:6px;padding:8px 10px;margin-bottom:16px">Expecting to join an <b>existing</b> workspace? Don't set up a new one — ask a Flow IN admin to invite your email under Settings &gt; Guest members, then sign in again.</p>
       <h3 style="font-size:.9em;margin-bottom:8px">1. Choose a shared drive</h3>
       <div id="setup-drives"></div>
       <div id="setup-step2" style="display:none;margin-top:16px">
@@ -346,6 +347,14 @@ textarea.form-input{resize:vertical;min-height:80px}
       <div class="admin-add-row">
         <input class="admin-add-input" id="admin-add-email" placeholder="Email address">
         <button class="admin-add-btn" onclick="addAdmin()">Add</button>
+      </div>
+      <hr style="border:none;border-top:1px solid #e0e8e4;margin:16px 0">
+      <h3 style="font-size:.85em;margin-bottom:6px">Guest members</h3>
+      <p style="font-size:.8em;color:#5a7a6a;margin-bottom:8px">Invite people whose email is NOT on this workspace's domain (e.g. partners, group staff on another domain). They sign in with their own Google account and see the same data. Inviting also tries to add them to the shared drive — if that fails, add them in Google Drive manually.</p>
+      <div class="admin-list" id="guest-list"></div>
+      <div class="admin-add-row">
+        <input class="admin-add-input" id="guest-add-email" placeholder="guest@example.com">
+        <button class="admin-add-btn" onclick="addGuest()">Invite</button>
       </div>
       <hr style="border:none;border-top:1px solid #e0e8e4;margin:16px 0">
       <h3 style="font-size:.85em;margin-bottom:6px">Gemini API key</h3>
@@ -688,7 +697,8 @@ async function restoreSession(){
   try{
     var about=await apiFetch('https://www.googleapis.com/drive/v3/about?fields=user');
     setUser(about.user);
-    if(isBlockedDomain(currentUser.domain)){accessToken=null;localStorage.removeItem('choreia_token');showView('welcome');return;}
+    // Personal-email domains are allowed through here: they may be invited
+    // guests. findConfig() signs them out if no invitation matches.
     showLoggedIn();await findConfig();
   }catch(e){
     // Token expired — try silent refresh
@@ -710,7 +720,7 @@ async function onTokenResponse(resp){
   try{
     var about=await apiFetch('https://www.googleapis.com/drive/v3/about?fields=user');
     setUser(about.user);
-    if(isBlockedDomain(currentUser.domain)){showToast('Please sign in with your work account');handleSignOut();return;}
+    // Personal-email domains may be invited guests — findConfig() decides.
     showLoggedIn();await findConfig();
   }catch(e){showToast('There was a problem signing in');showView('welcome');}
 }
@@ -768,8 +778,17 @@ function goBack(){
 
 // ==================== Config ====================
 var CONFIG_CACHE_KEY='choreia_flow_in_config_cache';
+// A config belongs to this user if their email domain matches, OR they are on
+// the config's guest list (invited from outside the domain — see Guest members
+// in Settings). Domain match wins when both could apply.
+function configMatchesUser(c){
+  if(!c)return false;
+  if(c.domain===currentUser.domain)return true;
+  var g=c.guests||[];
+  return g.indexOf((currentUser.email||'').toLowerCase())!==-1;
+}
 function loadCachedConfig(){
-  try{var raw=localStorage.getItem(CONFIG_CACHE_KEY);if(!raw)return null;var c=JSON.parse(raw);return (c&&c.domain===currentUser.domain)?c:null;}catch(e){return null;}
+  try{var raw=localStorage.getItem(CONFIG_CACHE_KEY);if(!raw)return null;var c=JSON.parse(raw);return configMatchesUser(c)?c:null;}catch(e){return null;}
 }
 function saveCachedConfig(){
   try{localStorage.setItem(CONFIG_CACHE_KEY,JSON.stringify(orgConfig));}catch(e){}
@@ -800,31 +819,47 @@ async function findConfig(){
         return apiFetch('https://www.googleapis.com/drive/v3/files/'+f.id+'?alt=media&supportsAllDrives=true').then(function(c){return {file:f,config:c};},function(){return null;});
       }));
       console.timeEnd('findConfig:fetchCandidates');
-      for(var i=0;i<fetched.length;i++){
+      // Two passes: a domain-owned workspace always wins over a guest invitation.
+      var picked=null;
+      for(var i=0;i<fetched.length&&!picked;i++){
         var r=fetched[i];if(!r||!r.config)continue;
-        if(r.config.domain===currentUser.domain){
-          orgConfig=r.config;orgConfig.configFileId=r.file.id;saveCachedConfig();
-          console.time('findConfig:loadAllData');
-          await loadAllData();
-          console.timeEnd('findConfig:loadAllData');
-          console.timeEnd('findConfig:firstRun');
-          showMainView();return;
-        }
+        if(r.config.domain===currentUser.domain)picked=r;
+      }
+      for(var j=0;j<fetched.length&&!picked;j++){
+        var r2=fetched[j];if(!r2||!r2.config)continue;
+        if(configMatchesUser(r2.config))picked=r2;
+      }
+      if(picked){
+        orgConfig=picked.config;orgConfig.configFileId=picked.file.id;saveCachedConfig();
+        console.time('findConfig:loadAllData');
+        await loadAllData();
+        console.timeEnd('findConfig:loadAllData');
+        console.timeEnd('findConfig:firstRun');
+        showMainView();return;
       }
     }
   }catch(e){console.error('findConfig error:',e);}
   console.timeEnd('findConfig:firstRun');
+  // No workspace found. Personal-email domains can only join by invitation —
+  // they must not create a workspace of their own.
+  if(isBlockedDomain(currentUser.domain)){
+    showToast('No invitation found for '+currentUser.email+'. Ask a Flow IN admin to invite you (Settings > Guest members), then sign in again.');
+    handleSignOut();return;
+  }
   showSetup();
 }
 
 async function refreshConfigFromDrive(){
   try{
     var data=await apiFetch('https://www.googleapis.com/drive/v3/files?q='+encodeURIComponent("name='"+CONFIG_FILENAME+"' and trashed=false")+'&corpora=allDrives&includeItemsFromAllDrives=true&supportsAllDrives=true&fields=files(id)');
+    var guestPick=null,guestPickId='';
     for(var i=0;i<(data.files||[]).length;i++){
       try{var c=await apiFetch('https://www.googleapis.com/drive/v3/files/'+data.files[i].id+'?alt=media&supportsAllDrives=true');
         if(c.domain===currentUser.domain){orgConfig=c;orgConfig.configFileId=data.files[i].id;saveCachedConfig();return;}
+        if(!guestPick&&configMatchesUser(c)){guestPick=c;guestPickId=data.files[i].id;}
       }catch(e){}
     }
+    if(guestPick){orgConfig=guestPick;orgConfig.configFileId=guestPickId;saveCachedConfig();}
   }catch(e){}
 }
 
@@ -930,7 +965,7 @@ function getAdmins(){if(!orgConfig)return[];return orgConfig.flowAdmins||orgConf
 function toggleAdminPanel(){
   var p=document.getElementById('admin-panel');var visible=p.style.display!=='none';
   p.style.display=visible?'none':'';
-  if(!visible){renderAdminList();loadGeminiKey();loadCustomerSpreadsheetId();loadCustomerFolderParent();loadDocTemplates();}
+  if(!visible){renderAdminList();renderGuestList();loadGeminiKey();loadCustomerSpreadsheetId();loadCustomerFolderParent();loadDocTemplates();}
 }
 function renderAdminList(){
   var admins=getAdmins();var h='';
@@ -951,6 +986,50 @@ async function addAdmin(){
 async function removeAdmin(email){
   var admins=getAdmins().filter(function(a){return a!==email});
   orgConfig.flowAdmins=admins;renderAdminList();await saveConfig();showToast(email+' removed');
+}
+
+// ==================== Guest members (invite outside the domain) ====================
+// App-level access = orgConfig.guests (matched in configMatchesUser()).
+// Data-level access = Google Drive: inviting also tries to add the guest to the
+// shared drive so they can actually open the config/spreadsheet. If the inviter
+// is not a manager of the shared drive that call fails — the guest is still
+// registered, and the admin is told to share the drive manually.
+function getGuests(){return (orgConfig&&orgConfig.guests)||[];}
+function renderGuestList(){
+  var guests=getGuests();var h='';
+  if(!guests.length)h='<p style="font-size:.8em;color:#8a9a90;margin:0 0 4px">No guests invited yet.</p>';
+  for(var i=0;i<guests.length;i++){
+    h+='<div class="admin-item"><span class="email">'+escapeHtml(guests[i])+'</span>'+
+       '<button class="btn-remove" onclick="removeGuest(\''+escapeAttr(guests[i])+'\')">Remove</button></div>';
+  }
+  var el=document.getElementById('guest-list');if(el)el.innerHTML=h;
+}
+async function shareDriveWithGuest(email){
+  // Add the guest as a shared-drive member (writer). Requires the inviter to
+  // be a manager of the drive.
+  await apiFetch('https://www.googleapis.com/drive/v3/files/'+orgConfig.driveId+'/permissions?supportsAllDrives=true&sendNotificationEmail=true',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({role:'writer',type:'user',emailAddress:email})
+  });
+}
+async function addGuest(){
+  var input=document.getElementById('guest-add-email');var email=input.value.trim().toLowerCase();
+  if(!email||email.indexOf('@')===-1){showToast('Enter a valid email address');return;}
+  if(email.split('@')[1]===orgConfig.domain){showToast('That email is on this workspace domain — no invitation needed');return;}
+  var guests=getGuests();if(guests.indexOf(email)!==-1){showToast('Already invited');return;}
+  guests.push(email);orgConfig.guests=guests;input.value='';renderGuestList();await saveConfig();
+  try{
+    await shareDriveWithGuest(email);
+    showToast(email+' invited — shared drive access granted');
+  }catch(e){
+    console.error('drive share failed',e);
+    showToast(email+' invited, but could not add them to the shared drive "'+(orgConfig.driveName||'')+'" — please add them manually in Google Drive');
+  }
+}
+async function removeGuest(email){
+  if(!confirm('Remove guest '+email+'? They will no longer be able to open Flow IN. (Their Google Drive access to the shared drive is NOT removed automatically — revoke it in Drive if needed.)'))return;
+  orgConfig.guests=getGuests().filter(function(g){return g!==email});
+  renderGuestList();await saveConfig();showToast(email+' removed');
 }
 function loadGeminiKey(){
   var input=document.getElementById('gemini-key-input');
