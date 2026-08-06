@@ -605,7 +605,10 @@ textarea.form-input{resize:vertical;min-height:80px}
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>
 // ==================== Config ====================
-var CLIENT_ID='595564106580-hsrunbvfacmr23d2jopl462taqilip75.apps.googleusercontent.com';
+// OAuth client lives in the m2-labo.in Google Cloud org (project genial-motif-504823-i2),
+// not the m2-labo.jp one the Japanese Choreia apps use. The JP client is Internal to
+// m2-labo.jp, so @m2-labo.in sign-ins were rejected with "Error 403: org_internal".
+var CLIENT_ID='662511891553-9s7uas3qqcr7ivp03fhv2u2kkhk82f4o.apps.googleusercontent.com';
 var SCOPES='https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar';
 var GEMINI_API_KEY='';
 var CONFIG_FILENAME='choreia-flow-in-config.json';
@@ -687,9 +690,13 @@ async function apiFetch(url,opts){
 }
 
 // ==================== Auth ====================
+// Token storage key is deliberately NOT shared with the Japanese Choreia apps
+// (which use 'choreia_token' on this same github.io origin). Flow IN authenticates
+// against a different OAuth client, so sharing the key would let an @m2-labo.in
+// token leak into the JP apps and vice versa.
 function initGIS(){
   tokenClient=google.accounts.oauth2.initTokenClient({client_id:CLIENT_ID,scope:SCOPES,callback:onTokenResponse,prompt:''});
-  var saved=localStorage.getItem('choreia_token');
+  var saved=localStorage.getItem('choreia_token_in');
   if(saved){accessToken=saved;restoreSession();}
 }
 async function restoreSession(){
@@ -702,7 +709,7 @@ async function restoreSession(){
     showLoggedIn();await findConfig();
   }catch(e){
     // Token expired — try silent refresh
-    accessToken=null;localStorage.removeItem('choreia_token');
+    accessToken=null;localStorage.removeItem('choreia_token_in');
     try{tokenClient.requestAccessToken({prompt:''});}
     catch(e2){showView('welcome');}
   }
@@ -711,11 +718,11 @@ async function onTokenResponse(resp){
   if(_tokenRefreshResolver){
     var r=_tokenRefreshResolver;_tokenRefreshResolver=null;
     if(resp.error){r.reject(new Error(resp.error));return;}
-    accessToken=resp.access_token;localStorage.setItem('choreia_token',accessToken);
+    accessToken=resp.access_token;localStorage.setItem('choreia_token_in',accessToken);
     r.resolve(accessToken);return;
   }
   if(resp.error){showToast('Sign-in failed');return;}
-  accessToken=resp.access_token;localStorage.setItem('choreia_token',accessToken);
+  accessToken=resp.access_token;localStorage.setItem('choreia_token_in',accessToken);
   showView('loading');
   try{
     var about=await apiFetch('https://www.googleapis.com/drive/v3/about?fields=user');
@@ -736,7 +743,7 @@ function toggleUserMenu(){var m=document.getElementById('user-menu');var show=m.
 function handleSignIn(){if(!tokenClient){showToast('Still initializing, try again');return;}tokenClient.requestAccessToken({prompt:'consent'});}
 function handleSignOut(){
   if(accessToken)google.accounts.oauth2.revoke(accessToken);
-  accessToken=null;localStorage.removeItem('choreia_token');clearCachedConfig();
+  accessToken=null;localStorage.removeItem('choreia_token_in');clearCachedConfig();
   orgConfig=null;customers=[];deals=[];activities=[];phaseHistory=[];savedCards=[];_cardsLoadedOnce=false;_cardSheetEnsured=false;_phaseHistorySheetEnsured=false;
   document.getElementById('auth-out').style.display='';document.getElementById('auth-in').style.display='none';
   showView('welcome');
