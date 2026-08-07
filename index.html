@@ -1320,15 +1320,21 @@ function currentFyPrefix(){
 async function generateQuoteNumber(){
   await ensureQuoteRegistrySheet();
   var prefix=currentFyPrefix();
-  var range=encodeURIComponent(QUOTE_REGISTRY_SHEET+'!B:B');
+  // Scan the whole registry block, not just the Number column. Rows written before
+  // the append fix landed one column to the right, and a number that isn't seen here
+  // means the next document silently reuses it — duplicate numbers on a Bill of
+  // Supply are a statutory problem, so this stays deliberately forgiving.
+  var range=encodeURIComponent(QUOTE_REGISTRY_SHEET+'!A:J');
   var data=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+getSheetId()+'/values/'+range);
   var maxSerial=0;
   (data.values||[]).forEach(function(r){
-    var v=String(r[0]||'').trim();
-    if(v.indexOf(prefix)===0){
-      var n=parseInt(v.slice(prefix.length),10);
-      if(!isNaN(n)&&n>maxSerial)maxSerial=n;
-    }
+    (r||[]).forEach(function(cell){
+      var v=String(cell||'').trim();
+      if(v.indexOf(prefix)===0){
+        var n=parseInt(v.slice(prefix.length),10);
+        if(!isNaN(n)&&n>maxSerial)maxSerial=n;
+      }
+    });
   });
   return prefix+String(maxSerial+1).padStart(4,'0');
 }
@@ -1338,8 +1344,14 @@ async function appendQuoteRegistry(docNum,deal,cust,newId){
   var d=new Date();
   var ymd=d.getFullYear()+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0');
   var row=['',docNum,ymd,(cust&&cust.company)||'','',(deal&&deal.amount)||'','',(deal&&deal.assignee)||currentUser.name||'',(deal&&deal.name)||'','https://docs.google.com/spreadsheets/d/'+newId];
-  await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+getSheetId()+'/values/'+encodeURIComponent(QUOTE_REGISTRY_SHEET+'!A:J')+':append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS',{
-    method:'POST',headers:{'Content-Type':'application/json'},
+  // Write to an explicit row rather than :append. The header's column A is blank, so
+  // append's table detection decides the table starts at column B and shifts the whole
+  // row one column right — which put the number in C where generateQuoteNumber (B)
+  // could never see it, and every document came out numbered 0001.
+  var existing=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+getSheetId()+'/values/'+encodeURIComponent(QUOTE_REGISTRY_SHEET+'!A:J'));
+  var nextRow=((existing.values||[]).length)+1;
+  await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+getSheetId()+'/values/'+encodeURIComponent(QUOTE_REGISTRY_SHEET+'!A'+nextRow+':J'+nextRow)+'?valueInputOption=USER_ENTERED',{
+    method:'PUT',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({values:[row]})
   });
 }
