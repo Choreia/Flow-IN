@@ -927,7 +927,8 @@ async function confirmSetup(){
 
     // Write headers
     var headers=[
-      {range:'Customers!A1:J1',values:[['ID','Company','Contact','Department','Title','Phone','Email','Address','Notes','Registered']]},
+      // Must match CUSTOMER_FIELDS column for column — every read and write uses it
+      {range:'Customers!A1:Z1',values:[['ID','Service type','Category','Relation','Company','Company (kana)','Corp type','Corp position','Department','PIN','State','City','Address','Building','Phone','Fax','Contact','Title','Mobile','Email','URL','Assignee','Credit','Status','Registered','Folder URL']]},
       {range:'Deals!A1:N1',values:[['ID','CustomerID','Company','Deal','Status','Amount','Unit','Assignee','StartDate','Due','Notes','Updated','LineItems','Product']]},
       {range:'Activities!A1:J1',values:[['ID','CustomerID','Company','DealID','Type','Details','Assignee','Date','Photo','FlyerDrop']]}
     ];
@@ -1657,15 +1658,16 @@ async function loadAllData(){
       deals=parseRows(rangesB[0]&&rangesB[0].values||[],DEAL_FIELDS);
       activities=parseRows(rangesB[1]&&rangesB[1].values||[],['id','customerId','company','dealId','type','content','assignee','datetime','photoUrl','flyerDistributed']);
     }else{
-      // Legacy: everything in single Flow spreadsheet
-      var data=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+SHEET_ID+'/values:batchGet?ranges='+encodeURIComponent('Customers!A2:J1000')+'&ranges='+encodeURIComponent('Deals!A2:N1000')+'&ranges='+encodeURIComponent('Activities!A2:J1000'));
+      // Everything in the one Flow spreadsheet (no external customer DB configured).
+      // Read with CUSTOMER_FIELDS — the same schema every write path uses. The old
+      // 10-column reader here disagreed with the 26-column writer, so a customer saved
+      // in this mode came back with its company (column E) read as 'contactTitle' and
+      // company left blank.
+      var data=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+SHEET_ID+'/values:batchGet?ranges='+encodeURIComponent('Customers!A2:Z1000')+'&ranges='+encodeURIComponent('Deals!A2:N1000')+'&ranges='+encodeURIComponent('Activities!A2:J1000'));
       var ranges=data.valueRanges||[];
-      // Legacy schema: map old fields into new field names where possible
-      var legacy=parseRows(ranges[0]&&ranges[0].values||[],['id','company','contact','department','contactTitle','tel','email','address','memo','createdAt']);
-      customers=legacy.map(function(c){
-        var n={};CUSTOMER_FIELDS.forEach(function(f){n[f]=c[f]||'';});
-        return n;
-      });
+      customers=parseRows(ranges[0]&&ranges[0].values||[],CUSTOMER_FIELDS);
+      customers=customers.filter(function(c){return (c.id&&String(c.id).trim())||(c.company&&String(c.company).trim());});
+      customers.forEach(function(c){if(c.id)c.id=String(c.id).replace(/\.0$/,'').trim();});
       deals=parseRows(ranges[1]&&ranges[1].values||[],DEAL_FIELDS);
       activities=parseRows(ranges[2]&&ranges[2].values||[],['id','customerId','company','dealId','type','content','assignee','datetime','photoUrl','flyerDistributed']);
       customerMaster={services:[],categories:[],members:[]};
